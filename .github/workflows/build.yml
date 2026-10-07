@@ -36,7 +36,9 @@ jobs:
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
           chmod +x gradlew
-          ./gradlew --no-daemon :engine:test :app:assembleDebug
+          ./gradlew --no-daemon :engine:test :app:assembleDebug -PbuildNumber=${{ github.run_number }}
+          BASE=$(grep -oP 'val versionBase = "\K[^"]+' app/build.gradle.kts || echo "1.0.0")
+          echo "APP_VERSION=$BASE.${{ github.run_number }}" >> "$GITHUB_ENV"
 
       - name: Publish a release with the APK
         working-directory: ${{ env.PROJECT_DIR }}
@@ -44,9 +46,22 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           cp app/build/outputs/apk/debug/app-debug.apk PokerCoach.apk
-          gh release create "build-${{ github.run_number }}.${{ github.run_attempt }}" PokerCoach.apk \
+          # The tag matches the app's version name, so updaters like Obtainium detect new versions correctly.
+          gh release create "v${APP_VERSION}" PokerCoach.apk \
             --repo "${{ github.repository }}" \
             --target "${{ github.sha }}" \
-            --title "PokerCoach build ${{ github.run_number }}" \
-            --notes "Open this page on your phone and tap PokerCoach.apk to install." \
+            --title "PokerCoach ${APP_VERSION}" \
+            --notes "Open this page on your phone and tap PokerCoach.apk to install, or let Obtainium update the app for you." \
             --latest
+
+      - name: Remove older project zips (keeps only the newest)
+        run: |
+          ls *.zip 2>/dev/null | sort -V > zips.txt || true
+          if [ "$(wc -l < zips.txt)" -gt 1 ]; then
+            head -n -1 zips.txt | while IFS= read -r f; do git rm -q -- "$f"; done
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            # [skip ci] stops this cleanup commit from starting another build.
+            git commit -m "Remove older project zips [skip ci]"
+            git push || echo "Cleanup push skipped (the branch moved on); it will happen next build."
+          fi
